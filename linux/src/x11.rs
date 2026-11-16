@@ -123,6 +123,8 @@ type Flush = unsafe extern "C" fn(*mut c_void) -> c_int;
 type Pending = unsafe extern "C" fn(*mut c_void) -> c_int;
 type NextEvent = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
 type ConfigureWindow = unsafe extern "C" fn(*mut c_void, Xid, c_uint, *mut WindowChanges) -> c_int;
+type GetSelectionOwner = unsafe extern "C" fn(*mut c_void, Xid) -> Xid;
+type SetSelectionOwner = unsafe extern "C" fn(*mut c_void, Xid, Xid, Xid) -> c_int;
 type GetAtomName = unsafe extern "C" fn(*mut c_void, Xid) -> *mut c_char;
 type ShapeRectangles = unsafe extern "C" fn(*mut c_void, Xid, c_int, c_int, c_int, c_int, *const c_void, c_int, c_int);
 type ShapeQuery = unsafe extern "C" fn(*mut c_void, *mut c_int, *mut c_int) -> c_int;
@@ -161,6 +163,8 @@ struct Xlib {
     pending: Pending,
     next_event: NextEvent,
     atom_name: GetAtomName,
+    selection_owner: GetSelectionOwner,
+    set_selection_owner: SetSelectionOwner,
     shape: ShapeRectangles,
     monitors: Option<GetMonitors>,
     free_monitors: Option<FreeMonitors>,
@@ -218,6 +222,8 @@ impl Xlib {
                 pending: symbol(&lib, b"XPending\0")?,
                 next_event: symbol(&lib, b"XNextEvent\0")?,
                 atom_name: symbol(&lib, b"XGetAtomName\0")?,
+                selection_owner: symbol(&lib, b"XGetSelectionOwner\0")?,
+                set_selection_owner: symbol(&lib, b"XSetSelectionOwner\0")?,
                 shape: symbol(&ext, b"XShapeCombineRectangles\0")?,
                 monitors, free_monitors, _randr: randr, _lib: lib, _ext: ext,
             })
@@ -723,6 +729,19 @@ pub fn run() -> Result<(), String> {
     let mut screens = Vec::new();
     let mut owners: HashMap<WindowId, String> = HashMap::new();
     synchronize(&x, &gpu, &mut screens, &report, &atoms, settings)?;
+    let instance = x.atom("_SNOWHUSH_X11_INSTANCE");
+    if unsafe { (x.selection_owner)(x.raw, instance) } != 0 {
+        for screen in screens.drain(..) { screen.destroy(&x, &gpu); }
+        eprintln!("Snowhush is already running on X11.");
+        return Ok(());
+    }
+    if let Some(first) = screens.first() {
+        unsafe {
+            (x.set_selection_owner)(x.raw, instance, first.window, 0);
+            (x.flush)(x.raw);
+        }
+    }
+    crate::log::start();
     unsafe { (x.select)(x.raw, x.root, SUBSTRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK | STRUCTURE_NOTIFY_MASK); }
 
     let mut events: EventLoop<Vec<Command>> = EventLoop::try_new().map_err(|e| e.to_string())?;
@@ -782,6 +801,12 @@ pub fn run() -> Result<(), String> {
             synchronize(&x, &gpu, &mut screens, &report, &atoms, settings)?;
             if old != screens.iter().map(|s| (s.name.clone(), s.bounds)).collect::<Vec<_>>() {
                 owners.clear();
+                if let Some(first) = screens.first() {
+                    unsafe {
+                        (x.set_selection_owner)(x.raw, instance, first.window, 0);
+                        (x.flush)(x.raw);
+                    }
+                }
             }
             last_monitor = now;
         }
