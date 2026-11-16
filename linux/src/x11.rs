@@ -473,6 +473,24 @@ fn snapshot(x: &Xlib, atoms: &Atoms) -> Report {
             radius: None,
         });
     }
+    // Cinnamon's panel is often drawn by its shell rather than a separate
+    // EWMH client. A reserved bottom workarea is still a physical shelf.
+    for display in &report.screens {
+        let bounds = Area::bounds(display);
+        let work = Area::work(display);
+        let height = bounds.bottom() - work.bottom();
+        if height >= 4.0 && height < bounds.h * 0.4
+            && !report.panels.iter().any(|panel| {
+                (panel.y + panel.h - bounds.bottom()).abs() < 2.0
+                    && panel.x < bounds.right() && panel.x + panel.w > bounds.x
+            })
+        {
+            report.panels.push(Panel {
+                id: format!("x11:panel:{}", display.name),
+                x: bounds.x, y: work.bottom(), w: bounds.w, h: height,
+            });
+        }
+    }
     report
 }
 
