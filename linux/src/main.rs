@@ -12,10 +12,14 @@ mod source;
 mod sway;
 mod tray;
 mod windows;
+mod x11;
 
 fn main() {
     snowhush_core::text::choose(&languages());
-    if let Err(error) = snow::run() {
+    let on_x11 = std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "x11")
+        || (std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_some());
+    let result = if on_x11 { x11::run() } else { snow::run() };
+    if let Err(error) = result {
         log!("failed: {error}");
         eprintln!("Snowhush couldn't start: {error}");
         std::process::exit(1);
