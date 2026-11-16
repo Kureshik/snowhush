@@ -12,7 +12,6 @@ use calloop::channel::Event;
 use libloading::Library;
 use snowhush_core::geometry::V2;
 use snowhush_core::simulation::{SnowSimulation, WindowSurface};
-use zbus::blocking::Connection as Bus;
 
 use crate::light;
 use crate::prefs::Settings;
@@ -608,7 +607,7 @@ fn command(command: Command, settings: &mut Settings, screens: &mut [Screen], x:
 pub fn run() -> Result<(), String> {
     let x = Xlib::connect()?;
     let atoms = Atoms::new(&x);
-    let gpu = Gpu::new(x.raw)?;
+    let mut gpu = Gpu::new(x.raw)?;
     let mut settings = Settings::load();
     let mut report = snapshot(&x, &atoms);
     let mut screens = Vec::new();
@@ -632,6 +631,7 @@ pub fn run() -> Result<(), String> {
     let mut last_scan = Instant::now() - Duration::from_secs(1);
     let mut last_monitor = Instant::now();
     let mut last_light = Instant::now() - Duration::from_secs(61);
+    let mut last_stacking: Vec<Xid> = Vec::new();
     let mut pending = Vec::new();
     let mut quit = false;
     log!("X11 backend: {} screen(s), visual {}", screens.len(), gpu.x11_visual_id()?);
@@ -659,7 +659,11 @@ pub fn run() -> Result<(), String> {
             for s in &mut screens { s.update_windows(&next, settings, dt); }
             report = next;
             last_scan = now;
-            for s in &screens { x.restack(s.window, &report, settings.behind_windows, &atoms); }
+            let stacking = x.values(x.root, atoms.stacking, 8192);
+            if stacking != last_stacking {
+                for s in &screens { x.restack(s.window, &report, settings.behind_windows, &atoms); }
+                last_stacking = stacking;
+            }
         }
         if now.duration_since(last_monitor) >= Duration::from_secs(1) {
             synchronize(&x, &gpu, &mut screens, &report, &atoms, settings)?;
