@@ -30,17 +30,17 @@ const CW_BORDER_PIXEL: c_ulong = 1 << 3;
 const CW_OVERRIDE_REDIRECT: c_ulong = 1 << 9;
 const CW_EVENT_MASK: c_ulong = 1 << 11;
 const CW_COLORMAP: c_ulong = 1 << 13;
-const SUBSTRUCTURE_NOTIFY_MASK: c_long_alias = 1 << 19;
-const PROPERTY_CHANGE_MASK: c_long_alias = 1 << 22;
-const STRUCTURE_NOTIFY_MASK: c_long_alias = 1 << 17;
+const SUBSTRUCTURE_NOTIFY_MASK: CLongAlias = 1 << 19;
+const PROPERTY_CHANGE_MASK: CLongAlias = 1 << 22;
+const STRUCTURE_NOTIFY_MASK: CLongAlias = 1 << 17;
 const IS_VIEWABLE: c_int = 2;
 const SHAPE_INPUT: c_int = 2;
 const PROP_MODE_REPLACE: c_int = 0;
-const VISUAL_ID_MASK: c_long_alias = 1;
+const VISUAL_ID_MASK: CLongAlias = 1;
 const CW_SIBLING: c_uint = 1 << 5;
 const CW_STACK_MODE: c_uint = 1 << 6;
 const BELOW: c_int = 1;
-type c_long_alias = libc::c_long;
+type CLongAlias = libc::c_long;
 
 #[repr(C)]
 #[derive(Default)]
@@ -55,8 +55,8 @@ struct SetWindowAttributes {
     backing_planes: c_ulong,
     backing_pixel: c_ulong,
     save_under: c_int,
-    event_mask: c_long_alias,
-    do_not_propagate_mask: c_long_alias,
+    event_mask: CLongAlias,
+    do_not_propagate_mask: CLongAlias,
     override_redirect: c_int,
     colormap: Xid,
     cursor: Xid,
@@ -89,8 +89,8 @@ struct WindowAttributes {
     visual: *mut c_void, root: Xid, class: c_int, bit_gravity: c_int, win_gravity: c_int,
     backing_store: c_int, backing_planes: c_ulong, backing_pixel: c_ulong,
     save_under: c_int, colormap: Xid, map_installed: c_int, map_state: c_int,
-    all_event_masks: c_long_alias, your_event_mask: c_long_alias,
-    do_not_propagate_mask: c_long_alias, override_redirect: c_int, screen: *mut c_void,
+    all_event_masks: CLongAlias, your_event_mask: CLongAlias,
+    do_not_propagate_mask: CLongAlias, override_redirect: c_int, screen: *mut c_void,
 }
 
 #[repr(C)]
@@ -105,17 +105,17 @@ type CloseDisplay = unsafe extern "C" fn(*mut c_void) -> c_int;
 type DefaultRoot = unsafe extern "C" fn(*mut c_void) -> Xid;
 type DefaultScreen = unsafe extern "C" fn(*mut c_void) -> c_int;
 type AtomFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> Xid;
-type GetProperty = unsafe extern "C" fn(*mut c_void, Xid, Xid, c_long_alias, c_long_alias, c_int, Xid, *mut Xid, *mut c_int, *mut c_ulong, *mut c_ulong, *mut *mut c_uchar) -> c_int;
+type GetProperty = unsafe extern "C" fn(*mut c_void, Xid, Xid, CLongAlias, CLongAlias, c_int, Xid, *mut Xid, *mut c_int, *mut c_ulong, *mut c_ulong, *mut *mut c_uchar) -> c_int;
 type GetGeometry = unsafe extern "C" fn(*mut c_void, Xid, *mut Xid, *mut c_int, *mut c_int, *mut c_uint, *mut c_uint, *mut c_uint, *mut c_uint) -> c_int;
 type Translate = unsafe extern "C" fn(*mut c_void, Xid, Xid, c_int, c_int, *mut c_int, *mut c_int, *mut Xid) -> c_int;
 type QueryTree = unsafe extern "C" fn(*mut c_void, Xid, *mut Xid, *mut Xid, *mut *mut Xid, *mut c_uint) -> c_int;
 type QueryPointer = unsafe extern "C" fn(*mut c_void, Xid, *mut Xid, *mut Xid, *mut c_int, *mut c_int, *mut c_int, *mut c_int, *mut c_uint) -> c_int;
 type GetAttributes = unsafe extern "C" fn(*mut c_void, Xid, *mut WindowAttributes) -> c_int;
-type GetVisualInfo = unsafe extern "C" fn(*mut c_void, c_long_alias, *mut VisualInfo, *mut c_int) -> *mut VisualInfo;
+type GetVisualInfo = unsafe extern "C" fn(*mut c_void, CLongAlias, *mut VisualInfo, *mut c_int) -> *mut VisualInfo;
 type CreateColormap = unsafe extern "C" fn(*mut c_void, Xid, *mut c_void, c_int) -> Xid;
 type CreateWindow = unsafe extern "C" fn(*mut c_void, Xid, c_int, c_int, c_uint, c_uint, c_uint, c_int, c_uint, *mut c_void, c_ulong, *mut SetWindowAttributes) -> Xid;
 type ChangeProperty = unsafe extern "C" fn(*mut c_void, Xid, Xid, Xid, c_int, c_int, *const c_uchar, c_int) -> c_int;
-type SelectInput = unsafe extern "C" fn(*mut c_void, Xid, c_long_alias) -> c_int;
+type SelectInput = unsafe extern "C" fn(*mut c_void, Xid, CLongAlias) -> c_int;
 type WindowAction = unsafe extern "C" fn(*mut c_void, Xid) -> c_int;
 type FreeColor = unsafe extern "C" fn(*mut c_void, Xid) -> c_int;
 type FreeMemory = unsafe extern "C" fn(*mut c_void) -> c_int;
@@ -235,7 +235,7 @@ impl Xlib {
         unsafe { (self.intern)(self.raw, name.as_ptr(), 0) }
     }
 
-    fn values(&self, window: Xid, property: Xid, len: c_long_alias) -> Vec<Xid> {
+    fn values(&self, window: Xid, property: Xid, len: CLongAlias) -> Vec<Xid> {
         let (mut kind, mut format, mut count, mut after) = (0, 0, 0, 0);
         let mut data: *mut c_uchar = ptr::null_mut();
         let status = unsafe { (self.get_property)(
