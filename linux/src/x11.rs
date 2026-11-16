@@ -851,3 +851,23 @@ pub fn run() -> Result<(), String> {
     for screen in screens.drain(..) { screen.destroy(&x, &gpu); }
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workarea_is_clipped_to_monitor() {
+        let monitor = Area { x: 1920.0, y: 0.0, w: 1920.0, h: 1200.0 };
+        let work = Area { x: 0.0, y: 0.0, w: 3840.0, h: 1160.0 };
+        assert_eq!(intersect(monitor, work), Area { x: 1920.0, y: 0.0, w: 1920.0, h: 1160.0 });
+    }
+
+    #[test]
+    fn non_overlapping_rectangles_have_zero_intersection() {
+        let a = Area { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        let b = Area { x: 1920.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        assert_eq!(intersect(a, b).w, 0.0);
+    }
+}
