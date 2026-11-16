@@ -126,7 +126,7 @@ type ConfigureWindow = unsafe extern "C" fn(*mut c_void, Xid, c_uint, *mut Windo
 type GetSelectionOwner = unsafe extern "C" fn(*mut c_void, Xid) -> Xid;
 type SetSelectionOwner = unsafe extern "C" fn(*mut c_void, Xid, Xid, Xid) -> c_int;
 type GetAtomName = unsafe extern "C" fn(*mut c_void, Xid) -> *mut c_char;
-type ShapeRectangles = unsafe extern "C" fn(*mut c_void, Xid, c_int, c_int, c_int, c_int, *const c_void, c_int, c_int);
+type ShapeRectangles = unsafe extern "C" fn(*mut c_void, Xid, c_int, c_int, c_int, *const c_void, c_int, c_int, c_int);
 type ShapeQuery = unsafe extern "C" fn(*mut c_void, *mut c_int, *mut c_int) -> c_int;
 type GetMonitors = unsafe extern "C" fn(*mut c_void, Xid, c_int, *mut c_int) -> *mut MonitorInfo;
 type FreeMonitors = unsafe extern "C" fn(*mut MonitorInfo);
@@ -359,7 +359,7 @@ impl Xlib {
             );
             if window == 0 { (self.free_color)(self.raw, colormap); return Err("XCreateWindow failed".into()); }
             // Empty INPUT shape is essential: otherwise a full-screen overlay eats every click.
-            (self.shape)(self.raw, window, SHAPE_INPUT, 0, 0, 0, ptr::null(), 0, 0);
+            (self.shape)(self.raw, window, SHAPE_INPUT, 0, 0, ptr::null(), 0, 0, 0);
             let role = atoms.notification;
             (self.change_property)(self.raw, window, atoms.window_type, atoms.atom_type, 32, PROP_MODE_REPLACE,
                 (&role as *const Xid).cast::<c_uchar>(), 1);
