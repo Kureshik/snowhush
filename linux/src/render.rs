@@ -138,8 +138,19 @@ pub struct Surface {
 type Field = (glow::Texture, glow::Framebuffer, (i32, i32));
 
 impl Gpu {
-    /// `display` is the Wayland connection's `wl_display`.
+    /// The Wayland path accepts the first matching EGL config (as before).
     pub fn new(display: *mut c_void) -> Result<Gpu, String> {
+        Self::new_with_visual(display, None)
+    }
+
+    /// X11 needs an EGL config whose *native* X11 Visual has a 32-bit ARGB
+    /// depth. EGL_ALPHA_SIZE=8 alone does not guarantee that: Mesa can
+    /// return an EGLConfig whose EGL_NATIVE_VISUAL_ID points to a 24-bit visual.
+    pub fn new_x11(display: *mut c_void, argb_visual: impl Fn(u32) -> bool) -> Result<Gpu, String> {
+        Self::new_with_visual(display, Some(&argb_visual))
+    }
+
+    fn new_with_visual(display: *mut c_void, argb_visual: Option<&dyn Fn(u32) -> bool>) -> Result<Gpu, String> {
         let egl = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }.map_err(|error| format!("loading EGL: {error}"))?;
         let display = unsafe { egl.get_display(display) }.ok_or("no EGL display")?;
         egl.initialize(display).map_err(|error| format!("EGL initialize: {error}"))?;
@@ -159,7 +170,17 @@ impl Gpu {
             8,
             egl::NONE,
         ];
-        let config = egl.choose_first_config(display, &attributes).map_err(|error| error.to_string())?.ok_or("no EGL config with alpha")?;
+        let config = if let Some(is_argb_visual) = argb_visual {
+            let count = egl.matching_config_count(display, &attributes).map_err(|error| error.to_string())?;
+            let mut configs = Vec::with_capacity(count);
+            egl.choose_config(display, &attributes, &mut configs).map_err(|error| error.to_string())?;
+            configs.into_iter().find(|config| {
+                egl.get_config_attrib(display, *config, egl::NATIVE_VISUAL_ID)
+                    .ok().is_some_and(|visual| visual != 0 && is_argb_visual(visual as u32))
+            }).ok_or("no EGL config with a matching 32-bit ARGB X11 visual")?
+        } else {
+            egl.choose_first_config(display, &attributes).map_err(|error| error.to_string())?.ok_or("no EGL config with alpha")?
+        };
         let context = egl
             .create_context(display, config, None, &[egl::CONTEXT_CLIENT_VERSION, 3, egl::NONE])
             .map_err(|error| format!("EGL context: {error}"))?;
