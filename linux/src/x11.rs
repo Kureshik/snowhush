@@ -332,6 +332,28 @@ impl Xlib {
         }).collect()
     }
 
+    /// EGL_NATIVE_VISUAL_ID must resolve to an X11 Visual with alpha.
+    /// Merely requesting EGL_ALPHA_SIZE=8 is insufficient on Mesa: the
+    /// first matching config can be RGB depth 24.
+    fn visual_depth(&self, visual_id: u32) -> Option<c_int> {
+        unsafe {
+            let mut template = VisualInfo {
+                visual: ptr::null_mut(), visualid: visual_id as Xid, screen: self.screen,
+                depth: 0, class: 0, red_mask: 0, green_mask: 0,
+                blue_mask: 0, colormap_size: 0, bits_per_rgb: 0,
+            };
+            let mut count = 0;
+            let list = (self.visual_info)(self.raw, VISUAL_ID_MASK, &mut template, &mut count);
+            if list.is_null() || count == 0 {
+                if !list.is_null() { (self.free)(list.cast()); }
+                return None;
+            }
+            let depth = (*list).depth;
+            (self.free)(list.cast());
+            Some(depth)
+        }
+    }
+
     fn make_overlay(&self, gpu: &Gpu, bounds: &Area, atoms: &Atoms) -> Result<(Xid, Xid, Surface), String> {
         unsafe {
             let mut template = VisualInfo {
@@ -723,7 +745,7 @@ fn pass_snow(screens: &mut [Screen], owners: &HashMap<WindowId, String>) {
 pub fn run() -> Result<(), String> {
     let x = Xlib::connect()?;
     let atoms = Atoms::new(&x);
-    let mut gpu = Gpu::new(x.raw)?;
+    let mut gpu = Gpu::new_x11(x.raw, |visual_id| x.visual_depth(visual_id) == Some(32))?;
     let mut settings = Settings::load();
     let mut report = snapshot(&x, &atoms);
     let mut screens = Vec::new();
