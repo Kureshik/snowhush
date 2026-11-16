@@ -24,7 +24,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 libc = "0.2"
-x11rb = { version = "0.13", features = ["randr", "shape"] }
 
 [profile.release]
 lto = true
