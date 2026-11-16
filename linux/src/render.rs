@@ -125,7 +125,8 @@ pub struct Gpu {
 
 /// One display's drawing surface.
 pub struct Surface {
-    window: WlEglSurface,
+    // Wayland owns a wl_egl_window; X11 owns the native Window in x11::Display.
+    window: Option<WlEglSurface>,
     surface: egl::Surface,
     pub width: i32,
     pub height: i32,
@@ -324,11 +325,31 @@ impl Gpu {
         self.egl.make_current(self.display, Some(surface), Some(surface), Some(self.context)).map_err(|error| error.to_string())?;
         // Frames are paced by the snow loop; a swap must never wait on a display that is off.
         let _ = self.egl.swap_interval(self.display, 0);
-        Ok(Surface { window, surface, width, height, field: Cell::new(None) })
+        Ok(Surface { window: Some(window), surface, width, height, field: Cell::new(None) })
+    }
+
+    /// X11 and Wayland share the GLES renderer; only the EGL native window differs.
+    /// The returned visual must be used for XCreateWindow, or X11 may reject the surface.
+    pub fn x11_visual_id(&self) -> Result<u32, String> {
+        self.egl.get_config_attrib(self.display, self.config, egl::NATIVE_VISUAL_ID)
+            .map(|id| id as u32)
+            .map_err(|error| format!("EGL X11 visual: {error}"))
+    }
+
+    pub fn surface_x11(&self, window: u32, width: i32, height: i32) -> Result<Surface, String> {
+        let native_window = window as usize as egl::NativeWindowType;
+        let surface = unsafe { self.egl.create_window_surface(self.display, self.config, native_window, None) }
+            .map_err(|error| format!("EGL X11 window surface: {error}"))?;
+        self.egl.make_current(self.display, Some(surface), Some(surface), Some(self.context))
+            .map_err(|error| error.to_string())?;
+        let _ = self.egl.swap_interval(self.display, 0);
+        Ok(Surface { window: None, surface, width, height, field: Cell::new(None) })
     }
 
     pub fn resize(&self, surface: &mut Surface, width: i32, height: i32) {
-        surface.window.resize(width.max(1), height.max(1), 0, 0);
+        if let Some(window) = &surface.window {
+            window.resize(width.max(1), height.max(1), 0, 0);
+        }
         surface.width = width;
         surface.height = height;
     }
