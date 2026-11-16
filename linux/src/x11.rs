@@ -11,7 +11,7 @@ use calloop::EventLoop;
 use calloop::channel::Event;
 use libloading::Library;
 use snowhush_core::geometry::V2;
-use snowhush_core::simulation::{Borrowed, Mapping, SnowSimulation, Stray, WindowId, WindowSurface};
+use snowhush_core::simulation::{Borrowed, Mapping, Pace, SnowSimulation, Stray, WindowId, WindowSurface};
 
 use crate::light;
 use crate::prefs::Settings;
@@ -767,7 +767,8 @@ pub fn run() -> Result<(), String> {
     log!("X11 backend: {} screen(s), visual {}", screens.len(), gpu.x11_visual_id()?);
 
     while !quit {
-        events.dispatch(Some(Duration::from_millis(if settings.max_performance { 8 } else { 16 })), &mut pending)
+        let fps = if settings.max_performance { 120 } else if screens.iter().all(|s| s.simulation.pace() == Pace::Calm) { 30 } else { 60 };
+        events.dispatch(Some(Duration::from_millis(1000 / fps)), &mut pending)
             .map_err(|e| e.to_string())?;
         for next in pending.drain(..) { command(next, &mut settings, &mut screens, &x, &report, &atoms, &mut quit); }
         if quit { break; }
