@@ -2,7 +2,7 @@
 //! stacking, geometry, desktops and pointer, while XShape makes the overlay click-through.
 //! Shares the Wayland renderer, tray, preferences and the platform-neutral simulation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::time::{Duration, Instant};
 use std::ptr;
@@ -11,7 +11,7 @@ use calloop::EventLoop;
 use calloop::channel::Event;
 use libloading::Library;
 use snowhush_core::geometry::V2;
-use snowhush_core::simulation::{SnowSimulation, WindowSurface};
+use snowhush_core::simulation::{Borrowed, Mapping, SnowSimulation, Stray, WindowId, WindowSurface};
 
 use crate::light;
 use crate::prefs::Settings;
@@ -602,6 +602,98 @@ fn command(command: Command, settings: &mut Settings, screens: &mut [Screen], x:
     }
 }
 
+
+/// Move a window's drift to the monitor owning most of its titlebar. Window IDs
+/// stay constant across workspace changes; the physics keeps dormant piles.
+fn transfer_windows(screens: &mut [Screen], report: &Report, owners: &mut HashMap<WindowId, String>) {
+    let mut next = HashMap::new();
+    for window in &report.windows {
+        let Some(owner) = windows::owner(report, window) else { continue };
+        let id = windows::window_id(&window.id);
+        if let Some(old) = owners.get(&id).filter(|old| old.as_str() != owner)
+            && let (Some(from), Some(to)) = (
+                screens.iter().position(|s| s.name == *old),
+                screens.iter().position(|s| s.name == owner),
+            )
+            && let Some(snow) = screens[from].simulation.take_window(id)
+        {
+            let a = screens[from].bounds;
+            let b = screens[to].bounds;
+            screens[to].simulation.adopt_window(
+                id, snow, Mapping::shift(V2::new((a.x - b.x) as f32, (b.bottom() - a.bottom()) as f32)),
+            );
+            screens[from].surfaces.clear();
+            screens[to].surfaces.clear();
+        }
+        next.insert(id, owner.to_owned());
+    }
+    *owners = next;
+}
+
+/// A drift spanning two monitors is drawn and collided with on both, although
+/// only one simulation owns it. This also prevents a hard cut at monitor edges.
+fn give_borrowed(screens: &mut [Screen], report: &Report, owners: &HashMap<WindowId, String>, on: bool) {
+    let all: Vec<Vec<Borrowed>> = (0..screens.len()).map(|index| {
+        let here = screens[index].bounds;
+        let mut borrowed = Vec::new();
+        if !on { return borrowed; }
+        for window in &report.windows {
+            let id = windows::window_id(&window.id);
+            let Some(owner) = owners.get(&id).filter(|owner| **owner != screens[index].name) else { continue };
+            let near = window.x < here.right() && window.x + window.w > here.x
+                && window.y - 300.0 < here.bottom() && window.y + 20.0 > here.y;
+            let Some(home) = screens.iter().find(|screen| screen.name == *owner).filter(|_| near) else { continue };
+            let Some(lent) = home.simulation.lend(id) else { continue };
+            let there = home.bounds;
+            let lent = lent.mapped(Mapping::shift(
+                V2::new((there.x - here.x) as f32, (here.bottom() - there.bottom()) as f32),
+            ));
+            let [left, bottom, right, top] = lent.bounds();
+            if right > 0.0 && left < here.w as f32 && top > 0.0 && bottom < here.h as f32 {
+                borrowed.push(lent);
+            }
+        }
+        borrowed
+    }).collect();
+    for (screen, borrowed) in screens.iter_mut().zip(all) {
+        screen.simulation.set_borrowed(borrowed);
+    }
+}
+
+/// Pass airborne particles between adjacent monitors instead of deleting them
+/// at a viewport boundary; return snow caught by a borrowed window to its owner.
+fn pass_snow(screens: &mut [Screen], owners: &HashMap<WindowId, String>) {
+    for index in 0..screens.len() {
+        let here = screens[index].bounds;
+        let caught = screens[index].simulation.take_caught();
+        for hit in caught {
+            let Some(owner) = owners.get(&hit.id) else { continue };
+            let Some(home) = screens.iter_mut().find(|s| s.name == *owner) else { continue };
+            let shift = V2::new((here.x - home.bounds.x) as f32, 0.0);
+            home.simulation.catch(&hit, Mapping::shift(shift));
+        }
+        let mut passed: Vec<(usize, Vec<Stray>)> = Vec::new();
+        for stray in screens[index].simulation.take_strays() {
+            let point = stray.position();
+            let (x, y) = (here.x + point.x as f64, here.bottom() - point.y as f64);
+            let Some(next) = screens.iter().enumerate().position(|(other, s)| {
+                let there = s.bounds;
+                other != index && s.shown && x >= there.x && x < there.right()
+                    && y >= there.y && y < there.bottom()
+            }) else { continue };
+            match passed.iter_mut().find(|(other, _)| *other == next) {
+                Some((_, strays)) => strays.push(stray),
+                None => passed.push((next, vec![stray])),
+            }
+        }
+        for (next, strays) in passed {
+            let there = screens[next].bounds;
+            let shift = V2::new((here.x - there.x) as f32, (there.bottom() - here.bottom()) as f32);
+            screens[next].simulation.adopt_strays(strays, Mapping::shift(shift));
+        }
+    }
+}
+
 /// Start after main has selected an X11 session. Only affects the X11 path; the
 /// original Wayland runner and its layers remain unchanged.
 pub fn run() -> Result<(), String> {
@@ -611,6 +703,7 @@ pub fn run() -> Result<(), String> {
     let mut settings = Settings::load();
     let mut report = snapshot(&x, &atoms);
     let mut screens = Vec::new();
+    let mut owners: HashMap<WindowId, String> = HashMap::new();
     synchronize(&x, &gpu, &mut screens, &report, &atoms, settings)?;
     unsafe { (x.select)(x.raw, x.root, SUBSTRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK | STRUCTURE_NOTIFY_MASK); }
 
@@ -656,6 +749,7 @@ pub fn run() -> Result<(), String> {
         if dirty || now.duration_since(last_scan) >= Duration::from_millis(90) {
             let next = snapshot(&x, &atoms);
             let dt = now.duration_since(last_scan).as_secs_f32().min(0.25);
+            transfer_windows(&mut screens, &next, &mut owners);
             for s in &mut screens { s.update_windows(&next, settings, dt); }
             report = next;
             last_scan = now;
@@ -666,7 +760,11 @@ pub fn run() -> Result<(), String> {
             }
         }
         if now.duration_since(last_monitor) >= Duration::from_secs(1) {
+            let old: Vec<_> = screens.iter().map(|s| (s.name.clone(), s.bounds)).collect();
             synchronize(&x, &gpu, &mut screens, &report, &atoms, settings)?;
+            if old != screens.iter().map(|s| (s.name.clone(), s.bounds)).collect::<Vec<_>>() {
+                owners.clear();
+            }
             last_monitor = now;
         }
         if now.duration_since(last_light) >= Duration::from_secs(60) {
@@ -677,6 +775,7 @@ pub fn run() -> Result<(), String> {
             last_light = now;
         }
 
+        give_borrowed(&mut screens, &report, &owners, settings.snow_on_windows);
         let dt = now.duration_since(last_frame).as_secs_f32().clamp(0.001, 0.05);
         last_frame = now;
         let cursor = x.cursor();
@@ -687,6 +786,7 @@ pub fn run() -> Result<(), String> {
             if covered { continue; }
             screen.simulation.walls = report.screens.iter().find(|d| d.name == screen.name)
                 .map(|d| windows::walls(d, &report.screens)).unwrap_or((true, true));
+            screen.simulation.neighbours = (!screen.simulation.walls.0, !screen.simulation.walls.1);
             let local = V2::new(cursor.x - screen.bounds.x as f32, screen.bounds.bottom() as f32 - cursor.y);
             screen.simulation.step(dt, local);
             let panel = screen.shelf.as_ref().map(|shelf| {
@@ -701,6 +801,7 @@ pub fn run() -> Result<(), String> {
             gpu.draw(&screen.surface, &screen.simulation, ambient, panel,
                 (now - started).as_secs_f32() % 1000.0, 1.0)?;
         }
+        pass_snow(&mut screens, &owners);
     }
     if let Some(tray) = tray.take() { tray.shutdown().wait(); }
     for screen in screens.drain(..) { screen.destroy(&x, &gpu); }
