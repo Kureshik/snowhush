@@ -125,7 +125,8 @@ pub struct Gpu {
 
 /// One display's drawing surface.
 pub struct Surface {
-    window: WlEglSurface,
+    // Wayland owns a wl_egl_window; X11 owns the native Window in x11::Display.
+    window: Option<WlEglSurface>,
     surface: egl::Surface,
     pub width: i32,
     pub height: i32,
@@ -137,8 +138,19 @@ pub struct Surface {
 type Field = (glow::Texture, glow::Framebuffer, (i32, i32));
 
 impl Gpu {
-    /// `display` is the Wayland connection's `wl_display`.
+    /// The Wayland path accepts the first matching EGL config (as before).
     pub fn new(display: *mut c_void) -> Result<Gpu, String> {
+        Self::new_with_visual(display, None)
+    }
+
+    /// X11 needs an EGL config whose *native* X11 Visual has a 32-bit ARGB
+    /// depth. EGL_ALPHA_SIZE=8 alone does not guarantee that: Mesa can
+    /// return an EGLConfig whose EGL_NATIVE_VISUAL_ID points to a 24-bit visual.
+    pub fn new_x11(display: *mut c_void, argb_visual: impl Fn(u32) -> bool) -> Result<Gpu, String> {
+        Self::new_with_visual(display, Some(&argb_visual))
+    }
+
+    fn new_with_visual(display: *mut c_void, argb_visual: Option<&dyn Fn(u32) -> bool>) -> Result<Gpu, String> {
         let egl = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }.map_err(|error| format!("loading EGL: {error}"))?;
         let display = unsafe { egl.get_display(display) }.ok_or("no EGL display")?;
         egl.initialize(display).map_err(|error| format!("EGL initialize: {error}"))?;
@@ -158,7 +170,17 @@ impl Gpu {
             8,
             egl::NONE,
         ];
-        let config = egl.choose_first_config(display, &attributes).map_err(|error| error.to_string())?.ok_or("no EGL config with alpha")?;
+        let config = if let Some(is_argb_visual) = argb_visual {
+            let count = egl.matching_config_count(display, &attributes).map_err(|error| error.to_string())?;
+            let mut configs = Vec::with_capacity(count);
+            egl.choose_config(display, &attributes, &mut configs).map_err(|error| error.to_string())?;
+            configs.into_iter().find(|config| {
+                egl.get_config_attrib(display, *config, egl::NATIVE_VISUAL_ID)
+                    .ok().is_some_and(|visual| visual != 0 && is_argb_visual(visual as u32))
+            }).ok_or("no EGL config with a matching 32-bit ARGB X11 visual")?
+        } else {
+            egl.choose_first_config(display, &attributes).map_err(|error| error.to_string())?.ok_or("no EGL config with alpha")?
+        };
         let context = egl
             .create_context(display, config, None, &[egl::CONTEXT_CLIENT_VERSION, 3, egl::NONE])
             .map_err(|error| format!("EGL context: {error}"))?;
@@ -324,11 +346,31 @@ impl Gpu {
         self.egl.make_current(self.display, Some(surface), Some(surface), Some(self.context)).map_err(|error| error.to_string())?;
         // Frames are paced by the snow loop; a swap must never wait on a display that is off.
         let _ = self.egl.swap_interval(self.display, 0);
-        Ok(Surface { window, surface, width, height, field: Cell::new(None) })
+        Ok(Surface { window: Some(window), surface, width, height, field: Cell::new(None) })
+    }
+
+    /// X11 and Wayland share the GLES renderer; only the EGL native window differs.
+    /// The returned visual must be used for XCreateWindow, or X11 may reject the surface.
+    pub fn x11_visual_id(&self) -> Result<u32, String> {
+        self.egl.get_config_attrib(self.display, self.config, egl::NATIVE_VISUAL_ID)
+            .map(|id| id as u32)
+            .map_err(|error| format!("EGL X11 visual: {error}"))
+    }
+
+    pub fn surface_x11(&self, window: u32, width: i32, height: i32) -> Result<Surface, String> {
+        let native_window = window as usize as egl::NativeWindowType;
+        let surface = unsafe { self.egl.create_window_surface(self.display, self.config, native_window, None) }
+            .map_err(|error| format!("EGL X11 window surface: {error}"))?;
+        self.egl.make_current(self.display, Some(surface), Some(surface), Some(self.context))
+            .map_err(|error| error.to_string())?;
+        let _ = self.egl.swap_interval(self.display, 0);
+        Ok(Surface { window: None, surface, width, height, field: Cell::new(None) })
     }
 
     pub fn resize(&self, surface: &mut Surface, width: i32, height: i32) {
-        surface.window.resize(width.max(1), height.max(1), 0, 0);
+        if let Some(window) = &surface.window {
+            window.resize(width.max(1), height.max(1), 0, 0);
+        }
         surface.width = width;
         surface.height = height;
     }

@@ -42,14 +42,14 @@ Package: snowhush
 Version: $version
 Architecture: amd64
 Maintainer: Mykhailo Bezruchko <michael.bezruchko@gmail.com>
-Depends: libc6 (>= 2.35), libgcc-s1, libwayland-client0, libwayland-egl1, libegl1
+Depends: libc6 (>= 2.35), libgcc-s1, libwayland-client0, libwayland-egl1, libegl1, libx11-6, libxext6, libxrandr2
 Section: x11
 Priority: optional
 Homepage: https://snowhush.app
-Description: Snow on your Wayland desktop
+Description: Snow on your Linux desktop
  Soft snow drifts across your desktop, settles on the tops of your windows,
  slides off when you drag them and parts around the cursor. Needs KDE Plasma 6,
- Hyprland, Sway or niri on Wayland.
+ Hyprland, Sway or niri on Wayland, or Cinnamon and other X11 desktops.
 EOF
 dpkg-deb --root-owner-group -Zxz --build "$deb" "$out/snowhush-x86_64.deb" > /dev/null
 

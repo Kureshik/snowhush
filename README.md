@@ -15,7 +15,7 @@
   &nbsp;·&nbsp;
   <a href="https://snowhush.app"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/readme/link-dark.svg"><img src=".github/readme/link-light.svg" width="20" height="16" align="absmiddle" alt=""></picture>snowhush.app</a>
   <br>
-  <sub>macOS 14 or later · Windows 10 or 11 · Linux with KDE Plasma 6, Hyprland, Sway or niri · free, source available</sub>
+  <sub>macOS 14 or later · Windows 10 or 11 · Linux with KDE Plasma 6, Hyprland, Sway, niri or X11 desktops · free, source available</sub>
 </p>
 
 https://github.com/user-attachments/assets/291c3cd5-3563-4b86-8b66-dfd924f980fc
@@ -60,7 +60,23 @@ windows/build.sh      # dist/Snowhush-Setup.exe, cross-compiled from macOS
 
 ### Linux
 
-`linux/` is a native version for Wayland: KDE Plasma 6, Hyprland, Sway and niri. It shares the snow's physics with the Windows version and draws with OpenGL ES in a layer-shell overlay. Wayland doesn't tell apps where other windows are or where the pointer is, so each compositor is asked in its own way: on KDE, Snowhush loads a small KWin script (`linux/src/snowhush.js`) while it runs, which reports both; Hyprland answers over its IPC socket, which tells both too; Sway and niri answer over theirs, though they don't tell where the pointer is, and niri only where floating windows are, so on niri only those collect snow.
+`linux/` runs on Wayland (KDE Plasma 6, Hyprland, Sway and niri) and X11 (including Linux Mint Cinnamon/Muffin). It shares the snow's physics with the Windows version and draws with OpenGL ES in a layer-shell overlay. Wayland doesn't tell apps where other windows are or where the pointer is, so each compositor is asked in its own way: on KDE, Snowhush loads a small KWin script (`linux/src/snowhush.js`) while it runs, which reports both; Hyprland answers over its IPC socket, which tells both too; Sway and niri answer over theirs, though they don't tell where the pointer is, and niri only where floating windows are, so on niri only those collect snow.
+
+The X11 backend uses Xlib/XShape for a transparent, click-through EGL overlay, EWMH for window geometry, stacking and virtual desktops, and XRandR for monitor geometry. It uses the same physics, rendering, system tray and settings as Wayland. The X11 desktop must have an active compositing manager (Cinnamon/Muffin does). Since X11 capture tools do not provide a universal mechanism to exclude a single overlay from screenshots, **Show in Screenshots** does not hide the snow on X11. X11 runs also retain the original Linux Wayland dependencies in the current build.
+
+For Linux Mint Cinnamon 22.x (X11), build the fork:
+
+```sh
+sudo apt install build-essential pkg-config libwayland-dev libegl1 libgles2 libx11-6 libxext6 libxrandr2
+# Install a current Rust stable toolchain from https://rustup.rs if cargo is missing.
+git clone https://github.com/Kureshik/snowhush.git
+cd snowhush
+git switch feat/cinnamon-x11
+cargo build --release --locked --manifest-path linux/Cargo.toml
+./linux/target/release/snowhush
+```
+
+Check that `echo $XDG_SESSION_TYPE` prints `x11`. The original Wayland code path remains available when logged into Wayland. This fork's X11 support is currently experimental until tested on a live Cinnamon session.
 
 Each release carries an AppImage that runs on any distribution, a `.deb` and an `.rpm`. On Arch, `makepkg -si` in `linux/packaging/aur` installs the release's build as a package. To build it yourself:
 
